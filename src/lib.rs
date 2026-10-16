@@ -1,7 +1,7 @@
 use std::env;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus};
+use std::process::{Command, ExitStatus, Output};
 
 fn xdg_path_manager() -> Option<PathBuf> {
     let path = PathBuf::from(env::var_os("XDG_DATA_HOME")?);
@@ -37,9 +37,9 @@ pub fn init_prefix(prefix: &Path) -> io::Result<ExitStatus> {
         .env("WINEPREFIX", prefix)
         .status()
 }
-pub fn run_exe(prefix: &Path, exe: &Path) -> io::Result<ExitStatus> {
+pub fn run_exe(prefix: &Path, exe: &Path) -> io::Result<Output> {
     Command::new("wine")
         .arg(exe)
         .env("WINEPREFIX", prefix)
-        .status()
+        .output()
 }

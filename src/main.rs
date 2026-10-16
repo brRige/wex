@@ -49,9 +49,21 @@ fn main() -> ExitCode {
     }
 
     match wex::run_exe(&prefix, Path::new(&exe_arg)) {
-        Ok(status) if status.success() => ExitCode::SUCCESS,
-        Ok(status) => {
-            eprintln!("exe exited with: {status}");
+        Ok(output) if output.status.success() => {
+            eprintln!(
+                "[measure] stdout: {} bytes, stderr: {} bytes",
+                output.stdout.len(),
+                output.stderr.len()
+            );
+            ExitCode::SUCCESS
+        }
+        Ok(output) => {
+            eprintln!("exe exited with: {}", output.status);
+            eprintln!(
+                "[measure] stdout: {} bytes, stderr: {} bytes",
+                output.stdout.len(),
+                output.stderr.len()
+            );
             ExitCode::FAILURE
         }
         Err(reason) => {
