@@ -1,7 +1,8 @@
 use std::env;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Output};
+use std::process::{Command, Output};
+pub mod diagnose;
 
 fn xdg_path_manager() -> Option<PathBuf> {
     let path = PathBuf::from(env::var_os("XDG_DATA_HOME")?);
@@ -30,12 +31,12 @@ pub fn prefix_manager(file: &Path) -> Option<PathBuf> {
     Some(top_dir.join("wex").join("prefixes").join(name))
 }
 
-pub fn init_prefix(prefix: &Path) -> io::Result<ExitStatus> {
+pub fn init_prefix(prefix: &Path) -> io::Result<Output> {
     Command::new("wine")
         .arg("wineboot")
         .arg("--init")
         .env("WINEPREFIX", prefix)
-        .status()
+        .output()
 }
 pub fn run_exe(prefix: &Path, exe: &Path) -> io::Result<Output> {
     Command::new("wine")

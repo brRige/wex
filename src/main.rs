@@ -3,6 +3,7 @@ use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::Path;
 use std::process::ExitCode;
+use std::process::Output;
 
 fn report_wine_error(reason: &io::Error) {
     match reason.kind() {
@@ -23,6 +24,13 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
 
+    let exe_path = Path::new(&exe_arg);
+
+    if !exe_path.is_file() {
+        eprintln!("Could not find the file: {}", exe_path.display());
+        return ExitCode::FAILURE;
+    }
+
     let Some(prefix) = wex::prefix_manager(Path::new(&exe_arg)) else {
         eprintln!("Could not work out where to store the prefix (is HOME set?)");
         return ExitCode::FAILURE;
@@ -36,9 +44,17 @@ fn main() -> ExitCode {
 
     if !prefix.join("system.reg").exists() {
         match wex::init_prefix(&prefix) {
-            Ok(status) if status.success() => println!("wineboot finished successfully"),
-            Ok(status) => {
-                eprintln!("wineboot failed: {status}");
+            Ok(output) if output.status.success() => println!("wineboot finished successfully"),
+            Ok(output) => {
+                eprintln!("wineboot failed: {}", output.status);
+                eprintln!(
+                    "--- stdout ---\n{}",
+                    String::from_utf8_lossy(&output.stdout)
+                );
+                eprintln!(
+                    "--- stderr ---\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
                 return ExitCode::FAILURE;
             }
             Err(reason) => {
@@ -63,6 +79,14 @@ fn main() -> ExitCode {
                 "[measure] stdout: {} bytes, stderr: {} bytes",
                 output.stdout.len(),
                 output.stderr.len()
+            );
+            eprintln!(
+                "--- stdout ---\n{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            eprintln!(
+                "--- stderr ---\n{}",
+                String::from_utf8_lossy(&output.stderr)
             );
             ExitCode::FAILURE
         }
