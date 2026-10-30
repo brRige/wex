@@ -14,8 +14,13 @@ Every application gets its own isolated environment, keeping apps separate and p
 
 1. Download the latest version from [GitHub Releases](https://github.com/brRige/wex/releases).
 2. Extract the downloaded `.tar.gz` file.
-3. Open the extracted folder.
-4. Open a terminal in that folder and run:
+   
+```bash
+tar -xvzf wex-v0.1.0-linux-x86_64.tar.gz
+```
+   
+4. Open the extracted folder.
+5. Open a terminal in that folder and run:
 
 ```bash
 ./wex-gui
