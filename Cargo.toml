@@ -2,5 +2,29 @@
 name = "wex"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-only"
+
+# The command line tool has no dependencies. The window is opt-in:
+#   cargo install --path . --features gui
+[features]
+gui = ["dep:eframe"]
 
 [dependencies]
+eframe = { version = "0.37", optional = true, default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
+
+[[bin]]
+name = "wex"
+path = "src/main.rs"
+
+[[bin]]
+name = "wex-gui"
+path = "src/gui.rs"
+required-features = ["gui"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
