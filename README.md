@@ -12,27 +12,66 @@ Every application gets its own isolated environment, keeping apps separate and p
 
 ## Installation
 
-1. Download the latest version from [GitHub Releases](https://github.com/brRige/wex/releases).
-2. Extract the downloaded `.tar.gz` file.
-   
+### Option A: Download (Recommended for Regular Users)
+
+No building or complicated setup required!
+
+**1. Download Wex**
+
+Visit the [Wex GitHub Releases](https://github.com/brRige/wex/releases) page.
+
+Open the latest release and download:
+
+`wex-v0.1.0-linux-x86_64.tar.gz`
+
+**2. Extract the archive**
+
+Open your Downloads folder in the terminal and run:
+
 ```bash
 tar -xvzf wex-v0.1.0-linux-x86_64.tar.gz
 ```
-   
-4. Open the extracted folder.
-5. Open a terminal in that folder and run:
+
+**3. Open Wex**
+
+Navigate to the folder containing the extracted files and run:
 
 ```bash
 ./wex-gui
 ```
 
-That's it! The graphical interface is ready to use.
-
-**Prefer the terminal?** Run applications directly with:
+If Linux doesn't allow you to execute it, run:
 
 ```bash
-./wex your-application.exe
+chmod +x wex-gui wex
 ```
+
+Then launch it again:
+
+```bash
+./wex-gui
+```
+You should be Good To Go now
+
+### Option B: Build from Source (For Developers)
+
+If you prefer installing Wex through Rust's Cargo package manager, make sure you have Rust, Cargo and Wine installed.
+
+Run:
+
+```bash
+cargo install --git https://github.com/brRige/wex --features gui
+```
+
+Once installation finishes, launch Wex:
+
+```bash
+wex-gui
+```
+
+To install without the graphical interface, omit `--features gui`.
+
+---
 
 ## Using Wex
 
@@ -40,13 +79,17 @@ That's it! The graphical interface is ready to use.
 - **Launch an application:** Click its tile in the Wex interface.
 - **View errors:** Check the Output and Crash Logs panels if something goes wrong.
 
-You can also use Wex from the terminal:
+### Terminal Commands
+
+You can also use Wex directly from your terminal:
 
 ```bash
 wex your-application.exe   # Install or run an application
 wex --list                 # View installed applications
 wex notepad                # Launch an installed application
 ```
+
+---
 
 ## Requirements
 
@@ -55,6 +98,8 @@ wex notepad                # Launch an installed application
 - An application compatible with Wine.
 
 **Note:** Not every Windows application or game is guaranteed to work.
+
+---
 
 ## License
 
