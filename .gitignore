@@ -2,3 +2,5 @@
 /wex
 /wex-gui
 *.tar.gz
+/dist/
+/*.tar.gz
