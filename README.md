@@ -6,7 +6,6 @@ Wex makes it easy to run Windows `.exe` applications on Linux using Wine.
 
 Every application gets its own isolated environment, keeping apps separate and preventing one installation from affecting another. When something goes wrong, Wex explains the problem in simple language.
 
-> **Early Development** · Linux only · Wine must be installed separately.
 
 ---
 
