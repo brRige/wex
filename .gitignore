@@ -1,1 +1,4 @@
-/target
+/target/
+/wex
+/wex-gui
+*.tar.gz

@@ -1,3 +1,8 @@
+//! Turns common Wine launch errors into advice a user can act on.
+//!
+//! Keep this list limited to errors that mean Wine never started the target.
+//! `run` uses that distinction to avoid pinning files that could not launch.
+
 const KNOWN: &[(&str, &str)] = &[
     (
         "ShellExecuteEx failed: File not found",
@@ -9,25 +14,28 @@ const KNOWN: &[(&str, &str)] = &[
     ),
 ];
 
-const FALLBACK: &str = "wex could not recognize this error. If you closed or cancelled an installer yourself, this is normal. Otherwise, the log has Wine's own output.";
+pub const FALLBACK: &str = "wex could not recognize this error. If you closed or cancelled an installer yourself, this is normal. Otherwise, the log has Wine's own output.";
 
-/// Case-insensitive substring search that never allocates.
-/// `needle` must not be empty.
+/// Case-insensitive ASCII substring search without allocating a lowercase copy.
 fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
-    haystack
-        .as_bytes()
-        .windows(needle.len())
-        .any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
+    let haystack = haystack.as_bytes();
+    let needle = needle.as_bytes();
+
+    !needle.is_empty()
+        && needle.len() <= haystack.len()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
-/// Wine prints its "file not found" message on stdout (stderr stays empty), so stdout goes first.
-pub fn diagnose(stdout: &str, stderr: &str) -> &'static str {
+/// Returns advice for a recognized Wine error, checking stdout before stderr.
+pub fn recognize(stdout: &str, stderr: &str) -> Option<&'static str> {
     KNOWN
         .iter()
         .find(|(phrase, _)| {
             contains_ignore_case(stdout, phrase) || contains_ignore_case(stderr, phrase)
         })
-        .map_or(FALLBACK, |&(_, advice)| advice)
+        .map(|(_, advice)| *advice)
 }
 
 #[cfg(test)]
@@ -35,10 +43,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn known_wine_messages_are_matched_on_stdout() {
-        let out = "Application could not be started, or no application associated with the specified file.\nShellExecuteEx failed: Bad format.\n";
-        assert!(diagnose(out, "").contains("not a Windows program"));
-        assert!(diagnose("ShellExecuteEx failed: File not found.", "").contains("could not find"));
-        assert_eq!(diagnose("", ""), FALLBACK);
+    fn known_messages_match_stdout_and_stderr() {
+        let message = "Application could not be started. ShellExecuteEx failed: Bad format.\n";
+        assert!(
+            recognize(message, "").is_some_and(|advice| advice.contains("not a Windows program"))
+        );
+        assert!(
+            recognize("", "ShellExecuteEx failed: File not found.")
+                .is_some_and(|advice| advice.contains("could not find"))
+        );
+    }
+
+    #[test]
+    fn unknown_and_short_messages_do_not_match() {
+        assert_eq!(recognize("", ""), None);
+        assert_eq!(recognize("x", ""), None);
+        assert_eq!(recognize("unrelated Wine output", ""), None);
     }
 }

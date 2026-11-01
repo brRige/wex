@@ -3,10 +3,11 @@ use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 pub mod apps;
 pub mod diagnose;
+pub mod files;
 pub mod run;
 
 fn xdg_path_manager() -> Option<PathBuf> {
@@ -155,6 +156,18 @@ pub fn launch_shortcut(prefix: &Path, shortcut: &Path) -> io::Result<Output> {
         .args(["start", "/wait", "/unix"])
         .arg(shortcut)
         .output()
+}
+
+/// Force-quits everything running in `prefix` with Wine's own kill command, so
+/// wex never has to track process ids. Succeeds quietly when nothing is running.
+pub fn stop_prefix(prefix: &Path) -> io::Result<()> {
+    Command::new("wineserver")
+        .arg("-k")
+        .env("WINEPREFIX", prefix)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|_| ())
 }
 
 #[cfg(test)]
