@@ -68,7 +68,7 @@ Download the Linux x86_64 archive:
 
 **2. Extract the archive**
 
-Open a terminal in your Downloads directory:
+Open a terminal in your Downloads directory:(Or Open terminal  and write "  cd ~/Downloads  " or whatever folder you have downloaded wex in.
 
 ```bash
 tar -xzf wex-v0.2.0-linux-x86_64.tar.gz
