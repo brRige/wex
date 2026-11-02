@@ -39,18 +39,6 @@ wine --version
 
 ---
 
-## Features
-
-- **Isolated Wine environments:** Keep applications separated using individual Wine prefixes.
-- **Graphical application manager:** Browse and launch your Windows applications through a simple GUI.
-- **EXE installation and launching:** Select Windows `.exe` files to install or run them.
-- **Application discovery:** Automatically find installed applications through their Start Menu shortcuts.
-- **Portable application support:** Add and manage portable Windows programs.
-- **Stop applications:** Stop running applications directly from the GUI.
-- **Directory access:** View an application's Wine directory and files.
-- **Previously launched applications:** Find previously launched `.exe` files through the interface.
-- **Error diagnostics:** Understand common Wine errors through simpler explanations.
-- **Command-line interface:** Manage and launch applications directly from your terminal.
 
 ## Installation
 
