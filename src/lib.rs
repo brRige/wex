@@ -1,7 +1,9 @@
 use std::env;
+use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -9,6 +11,7 @@ pub mod apps;
 pub mod diagnose;
 pub mod files;
 pub mod run;
+pub mod shortcut;
 
 fn xdg_path_manager() -> Option<PathBuf> {
     let path = PathBuf::from(env::var_os("XDG_DATA_HOME")?);
@@ -43,8 +46,14 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     })
 }
 
+/// `fnv1a` squeezed into 32 bits, for the short hex tag in folder and file names.
+pub(crate) fn short_hash(bytes: &[u8]) -> u32 {
+    let hash = fnv1a(bytes);
+    (hash ^ (hash >> 32)) as u32
+}
+
 /// Lowercase ASCII name of at most 40 characters: `"Setup (v2)"` becomes `"setup-v2"`.
-fn slug(name: &str) -> String {
+pub(crate) fn slug(name: &str) -> String {
     let mut out = String::with_capacity(40);
     for c in name.chars() {
         if out.len() >= 40 {
@@ -69,12 +78,15 @@ fn slug(name: &str) -> String {
 /// `setup.exe` files never share a prefix. Hashing the path (not the file) costs
 /// nothing, however large the installer is.
 fn prefix_name(exe: &Path) -> String {
-    let hash = fnv1a(exe.as_os_str().as_bytes());
     let stem = exe
         .file_stem()
         .map(|s| s.to_string_lossy())
         .unwrap_or_default();
-    format!("{}-{:08x}", slug(&stem), (hash ^ (hash >> 32)) as u32)
+    format!(
+        "{}-{:08x}",
+        slug(&stem),
+        short_hash(exe.as_os_str().as_bytes())
+    )
 }
 
 /// Prefix for `exe`, which must be an absolute, canonical path. A program that
@@ -128,6 +140,24 @@ pub fn write_log(path: &Path, title: &str, run: &Output) -> io::Result<()> {
     out.write_all(&run.stderr)?;
     out.write_all(b"\n")?;
     out.flush()
+}
+
+/// True when `path` is a file (links are followed) that anyone may run.
+fn is_runnable(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+}
+
+/// Looks for a runnable `wine` in the folders of a PATH-style list. Empty entries
+/// are skipped. It only looks at the folders and never starts Wine.
+fn wine_in(paths: &OsStr) -> bool {
+    env::split_paths(paths)
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .any(|dir| is_runnable(&dir.join("wine")))
+}
+
+/// Is Wine installed? A few file lookups, so it is cheap to ask again.
+pub fn wine_installed() -> bool {
+    env::var_os("PATH").is_some_and(|paths| wine_in(&paths))
 }
 
 /// `wine` bound to `prefix`. Wine's `fixme:` lines are silenced unless the user
@@ -186,6 +216,29 @@ mod tests {
         );
         // Pinned: prefixes must keep their names across releases.
         assert_eq!(fnv1a(b"a"), 0xaf63_dc4c_8601_ec8c);
+        assert_eq!(a, "setup-v2-b919a89a");
+    }
+
+    #[test]
+    fn wine_is_found_only_when_runnable_in_a_listed_folder() {
+        let root = env::temp_dir().join(format!("wex-wine-test-{}", std::process::id()));
+        let (with, without) = (root.join("with"), root.join("without"));
+        fs::create_dir_all(&with).unwrap();
+        fs::create_dir_all(&without).unwrap();
+        let wine = with.join("wine");
+        fs::write(&wine, b"#!/bin/sh\n").unwrap();
+        fs::write(without.join("wine"), b"#!/bin/sh\n").unwrap();
+
+        // The file in `without` exists but is not runnable.
+        fs::set_permissions(&wine, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(without.join("wine"), fs::Permissions::from_mode(0o644)).unwrap();
+
+        let list = |dirs: &[&Path]| env::join_paths(dirs).unwrap();
+        assert!(wine_in(&list(&[&without, &with])));
+        assert!(!wine_in(&list(&[&without])));
+        assert!(!wine_in(&list(&[&root.join("missing")])));
+        assert!(!wine_in(OsStr::new("")));
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

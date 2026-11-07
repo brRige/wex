@@ -1,6 +1,6 @@
 [package]
 name = "wex"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.95"
 license = "GPL-3.0-only"
@@ -28,4 +28,7 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+
+
 

@@ -108,7 +108,7 @@ fn finish(result: io::Result<Output>, log: &Path) -> Ended {
 /// Starts an app (a Start Menu shortcut or a pinned program) and waits for it to end.
 pub fn launch(app: &App) -> Result<(), String> {
     let log = log_path(&app.prefix).ok_or(NO_DATA_DIR)?;
-    match &app.target {
+    let ended = match &app.target {
         Target::Shortcut(link) => finish(launch_shortcut(&app.prefix, link), &log),
         Target::Exe(exe) if exe.is_file() => finish(run_exe(&app.prefix, exe), &log),
         Target::Exe(exe) => {
@@ -118,8 +118,12 @@ pub fn launch(app: &App) -> Result<(), String> {
                 app.prefix.display()
             ));
         }
+    };
+    // Played means Wine really started it; a run that never started does not count.
+    if !matches!(ended, Ended::NeverStarted(_)) {
+        apps::mark_played(&app.prefix);
     }
-    .result()
+    ended.result()
 }
 
 /// Force-quits everything running in an app's prefix.
@@ -180,6 +184,9 @@ pub fn run_program(arg: &Path, note: &mut dyn FnMut(&str)) -> Result<(), String>
     }
 
     let ended = finish(run_exe(&prefix, &exe), &log);
+    if !matches!(ended, Ended::NeverStarted(_)) {
+        apps::mark_played(&prefix);
+    }
 
     let installed = apps::shortcuts(&prefix);
     if installed.is_empty() {

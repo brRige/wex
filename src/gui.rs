@@ -1,7 +1,10 @@
 //! wex-gui: one plain window. Built only with `--features gui`; the command line tool never links it.
 
+use std::cmp::Reverse;
+use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::Read;
+use std::mem;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -11,17 +14,19 @@ use std::thread;
 use std::time::SystemTime;
 
 use eframe::egui::{
-    self, Align, Align2, Color32, FontId, Frame, Layout, RichText, ScrollArea, Sense, Stroke,
-    TextEdit, vec2,
+    self, Align, Align2, Color32, ComboBox, FontId, Frame, Key, Layout, RichText, ScrollArea,
+    Sense, Stroke, TextEdit, vec2,
 };
 use wex::apps::{self, App, Target};
 use wex::files::{self, SavedFile};
 use wex::run;
+use wex::shortcut;
 
 const TILE: f32 = 96.0;
 const LOG_LIMIT: u64 = 256 * 1024;
 const OUTPUT_LIMIT: usize = 200 * 1024;
 const FILES_SHOWN: usize = 200;
+const WINE_URL: &str = "https://www.winehq.org/download";
 
 /// What a background thread tells the window.
 enum Event {
@@ -42,7 +47,47 @@ enum Act {
     Launch(App),
     Files(App),
     Folder(App),
+    Rename(App),
+    MenuAdd(App),
+    MenuRemove(App),
     Unpin(App),
+}
+
+/// The order of the tiles. `AToZ` is the order `apps::discover` already returns.
+#[derive(Clone, Copy, PartialEq)]
+enum Sort {
+    AToZ,
+    ZToA,
+    Recent,
+}
+
+impl Sort {
+    const ALL: [Self; 3] = [Self::AToZ, Self::ZToA, Self::Recent];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::AToZ => "A to Z",
+            Self::ZToA => "Z to A",
+            Self::Recent => "Recently played",
+        }
+    }
+}
+
+/// The "Wine is missing" window: shown at start when Wine is not found, and again
+/// (with a short extra line) when "Check again" still does not find it.
+#[derive(PartialEq)]
+enum Notice {
+    Hidden,
+    Missing,
+    StillMissing,
+}
+
+/// The Rename window: the app, the text being typed, and whether the box still
+/// needs the keyboard focus (true only for the first frame).
+struct Renaming {
+    app: App,
+    text: String,
+    focus: bool,
 }
 
 /// An app that is running now. `stopped` is set when the user presses Stop, so the
@@ -104,8 +149,37 @@ fn age_text(time: SystemTime) -> String {
     }
 }
 
+/// Fills `view` with the indexes of the apps whose shown name contains `query`
+/// (ignoring case and spaces at the ends), in the order `sort` asks for. `apps`
+/// comes sorted A to Z by the shown name, so that order needs no work and Z to A is
+/// just reversed.
+fn arrange(view: &mut Vec<usize>, apps: &[App], query: &str, sort: Sort) {
+    let query = query.trim().to_lowercase();
+    view.clear();
+    view.extend(
+        apps.iter()
+            .enumerate()
+            .filter(|(_, app)| query.is_empty() || app.name.to_lowercase().contains(&query))
+            .map(|(index, _)| index),
+    );
+    match sort {
+        Sort::AToZ => {}
+        Sort::ZToA => view.reverse(),
+        // Newest first; apps never played go last. The sort is stable, so equal
+        // times stay in A to Z order.
+        Sort::Recent => view.sort_by_key(|&index| Reverse(apps[index].played)),
+    }
+}
+
 struct Gui {
     apps: Vec<App>,
+    /// Which apps are shown as tiles, and in what order: indexes into `apps`.
+    /// Rebuilt only when the apps, the search text or the sort changes, never per frame.
+    view: Vec<usize>,
+    query: String,
+    sort: Sort,
+    notice: Notice,
+    renaming: Option<Renaming>,
     running: Vec<Running>,
     crashes: Vec<(String, PathBuf)>,
     shown: Option<(PathBuf, String)>, // the selected crash log and its text
@@ -127,6 +201,15 @@ impl Gui {
         let (tx, rx) = channel();
         let mut gui = Self {
             apps: Vec::new(),
+            view: Vec::new(),
+            query: String::new(),
+            sort: Sort::AToZ,
+            notice: if wex::wine_installed() {
+                Notice::Hidden
+            } else {
+                Notice::Missing
+            },
+            renaming: None,
             running: Vec::new(),
             crashes: Vec::new(),
             shown: None,
@@ -141,9 +224,15 @@ impl Gui {
         gui
     }
 
+    /// Works out which tiles to show and in what order (see `arrange`).
+    fn rebuild_view(&mut self) {
+        arrange(&mut self.view, &self.apps, &self.query, self.sort);
+    }
+
     /// Rescans apps and failed runs. Both are small folder reads.
     fn refresh(&mut self) {
         self.apps = wex::prefixes_dir().map_or_else(Vec::new, |dir| apps::discover(&dir));
+        self.rebuild_view();
 
         let mut crashes: Vec<_> = wex::logs_dir()
             .and_then(|dir| fs::read_dir(dir).ok())
@@ -283,22 +372,36 @@ impl Gui {
         });
     }
 
-    /// Opens a folder in the desktop's file manager.
-    fn open_folder(&self, ctx: &egui::Context, dir: PathBuf) {
+    /// Hands a folder or web address to the desktop's own opener (`xdg-open`).
+    /// `failed` is what Output says when nothing could open it.
+    fn open_with_desktop(&self, ctx: &egui::Context, target: OsString, failed: String) {
         self.spawn(ctx, move |send| {
             let opened = Command::new("xdg-open")
-                .arg(&dir)
+                .arg(target)
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status()
                 .is_ok_and(|status| status.success());
             if !opened {
-                send(Event::Line(format!(
-                    "wex could not open a file manager. Open this folder yourself: {}",
-                    dir.display()
-                )));
+                send(Event::Line(failed));
             }
         });
+    }
+
+    /// Opens a folder in the desktop's file manager.
+    fn open_folder(&self, ctx: &egui::Context, dir: PathBuf) {
+        let failed = format!(
+            "wex could not open a file manager. Open this folder yourself: {}",
+            dir.display()
+        );
+        self.open_with_desktop(ctx, dir.into_os_string(), failed);
+    }
+
+    /// Opens the Wine download page in the web browser.
+    fn open_wine_page(&self, ctx: &egui::Context) {
+        let failed =
+            format!("wex could not open a web browser. Open this address yourself: {WINE_URL}");
+        self.open_with_desktop(ctx, WINE_URL.into(), failed);
     }
 
     /// Lists an app's saved files. The scan is capped (see `files.rs`), so it is
@@ -354,10 +457,14 @@ impl Gui {
             ui.label("No apps yet. Click Add and choose a program (.exe).");
             return;
         }
+        if self.view.is_empty() {
+            ui.label(format!("No app matches \"{}\".", self.query.trim()));
+            return;
+        }
         let mut act = None;
         ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                for app in &self.apps {
+                for app in self.view.iter().map(|&index| &self.apps[index]) {
                     let (rect, response) = ui.allocate_exact_size(vec2(TILE, TILE), Sense::click());
                     let live = self.running.iter().any(|r| r.prefix == app.prefix);
                     if ui.is_rect_visible(rect) {
@@ -409,7 +516,7 @@ impl Gui {
                     let response = response.on_hover_ui(|ui| {
                         ui.label(&app.name);
                         let state = if live { "Running. " } else { "" };
-                        ui.label(RichText::new(format!("{state}Right-click for files.")).weak());
+                        ui.label(RichText::new(format!("{state}Right-click for more.")).weak());
                     });
                     if response.clicked() {
                         act = Some(Act::Launch(app.clone()));
@@ -421,6 +528,25 @@ impl Gui {
                         }
                         if ui.button("Open folder").clicked() {
                             act = Some(Act::Folder(app.clone()));
+                            ui.close();
+                        }
+                        if ui.button("Rename").clicked() {
+                            act = Some(Act::Rename(app.clone()));
+                            ui.close();
+                        }
+                        // One file lookup, and only while this menu is open.
+                        let in_menu = shortcut::exists(app);
+                        let label = if in_menu {
+                            "Remove from app menu"
+                        } else {
+                            "Add to app menu"
+                        };
+                        if ui.button(label).clicked() {
+                            act = Some(if in_menu {
+                                Act::MenuRemove(app.clone())
+                            } else {
+                                Act::MenuAdd(app.clone())
+                            });
                             ui.close();
                         }
                         if matches!(app.target, Target::Exe(_))
@@ -441,7 +567,27 @@ impl Gui {
                 let dir = files::user_dir(&app.prefix).unwrap_or(app.prefix);
                 self.open_folder(&ctx, dir);
             }
+            Some(Act::Rename(app)) => {
+                self.renaming = Some(Renaming {
+                    text: app.name.clone(),
+                    app,
+                    focus: true,
+                });
+            }
+            Some(Act::MenuAdd(app)) => match shortcut::create(&app) {
+                Ok(_) => self.say(&format!(
+                    "{} is now in your app menu. Look for it in your launcher.",
+                    app.name
+                )),
+                Err(message) => self.say(&message),
+            },
+            Some(Act::MenuRemove(app)) => match shortcut::remove(&app) {
+                Ok(()) => self.say(&format!("{} was removed from your app menu.", app.name)),
+                Err(message) => self.say(&message),
+            },
             Some(Act::Unpin(app)) => {
+                // An app-menu entry for a program that is leaving the list would only fail.
+                let _ = shortcut::remove(&app);
                 match apps::unpin(&app.prefix) {
                     Ok(()) => self.say(&format!("{} removed from the list.", app.name)),
                     Err(reason) => self.say(&format!(
@@ -492,6 +638,117 @@ impl Gui {
             self.picker = Some(Picker::open(dir));
         } else if !open {
             self.picker = None;
+        }
+    }
+
+    /// Saves a new name for `app` and refreshes the list. An app-menu entry the app
+    /// already has is rewritten, so it shows the new name too.
+    fn finish_rename(&mut self, app: App, text: &str) {
+        if let Err(reason) = apps::rename(&app.prefix, &app.original, text) {
+            self.say(&format!(
+                "wex could not rename {}: {}.",
+                app.name,
+                run::why(&reason)
+            ));
+            return;
+        }
+        self.refresh();
+        let problem = self
+            .apps
+            .iter()
+            .find(|now| now.prefix == app.prefix && now.original == app.original)
+            .filter(|now| shortcut::exists(now))
+            .and_then(|now| shortcut::create(now).err());
+        if let Some(message) = problem {
+            self.say(&message);
+        }
+    }
+
+    fn rename_window(&mut self, ctx: &egui::Context) {
+        let Some(rename) = &mut self.renaming else {
+            return;
+        };
+        let (mut save, mut cancel, mut open) = (false, false, true);
+        egui::Window::new("Rename app")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(format!("Name for {}:", rename.app.original));
+                let edit = ui.add(
+                    TextEdit::singleline(&mut rename.text)
+                        .char_limit(apps::MAX_NAME)
+                        .desired_width(260.0),
+                );
+                if mem::take(&mut rename.focus) {
+                    edit.request_focus();
+                }
+                if edit.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
+                    save = true;
+                }
+                ui.horizontal(|ui| {
+                    save |= ui.button("Save").clicked();
+                    if ui.button("Use original name").clicked() {
+                        rename.text.clear();
+                        save = true;
+                    }
+                    cancel = ui.button("Cancel").clicked();
+                });
+                ui.label(RichText::new("This only changes the name wex shows.").weak());
+            });
+        if save {
+            if let Some(Renaming { app, text, .. }) = self.renaming.take() {
+                self.finish_rename(app, &text);
+            }
+        } else if cancel || !open {
+            self.renaming = None;
+        }
+    }
+
+    fn wine_window(&mut self, ctx: &egui::Context) {
+        if self.notice == Notice::Hidden {
+            return;
+        }
+        let (mut download, mut again, mut later) = (false, false, false);
+        egui::Window::new("Wine is missing")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.set_max_width(340.0);
+                ui.label(RichText::new("Wine is not installed on this computer.").strong());
+                ui.label(
+                    "wex needs Wine, a free program, to run Windows apps. Install it, then press Check again.",
+                );
+                ui.label(
+                    RichText::new(format!(
+                        "You can also install Wine from your Software Center.\n{WINE_URL}"
+                    ))
+                    .weak(),
+                );
+                if self.notice == Notice::StillMissing {
+                    ui.label("Wine is still not found. Finish the install, then try again.");
+                }
+                ui.horizontal(|ui| {
+                    download = ui.button("Download Wine").clicked();
+                    again = ui.button("Check again").clicked();
+                    later = ui.button("Not now").clicked();
+                });
+            });
+        if download {
+            self.open_wine_page(ctx);
+        }
+        if again {
+            if wex::wine_installed() {
+                self.notice = Notice::Hidden;
+                self.say("Wine was found. You can run apps now.");
+            } else {
+                self.notice = Notice::StillMissing;
+            }
+        }
+        if later {
+            self.notice = Notice::Hidden;
         }
     }
 
@@ -673,6 +930,27 @@ impl eframe::App for Gui {
                     let ctx = ui.ctx().clone();
                     self.stop(&ctx, index);
                 }
+                // Search and sort sit at the right edge, so the buttons keep their place.
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let mut changed = false;
+                    ComboBox::from_id_salt("sort")
+                        .width(120.0)
+                        .selected_text(self.sort.label())
+                        .show_ui(ui, |ui| {
+                            for sort in Sort::ALL {
+                                changed |= ui
+                                    .selectable_value(&mut self.sort, sort, sort.label())
+                                    .changed();
+                            }
+                        });
+                    let search = TextEdit::singleline(&mut self.query)
+                        .hint_text("Search apps")
+                        .desired_width(150.0);
+                    changed |= ui.add(search).changed();
+                    if changed {
+                        self.rebuild_view();
+                    }
+                });
             });
         });
         egui::Panel::bottom("log")
@@ -684,6 +962,8 @@ impl eframe::App for Gui {
             .show(ui, |ui| self.tiles(ui));
         let ctx = ui.ctx().clone();
         self.picker_window(&ctx);
+        self.rename_window(&ctx);
+        self.wine_window(&ctx);
     }
 }
 
@@ -698,4 +978,55 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native("wex", options, Box::new(|cc| Ok(Box::new(Gui::new(cc)))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn app(name: &str, played: Option<u64>) -> App {
+        App {
+            name: name.into(),
+            original: name.into(),
+            prefix: PathBuf::from("/p").join(name),
+            target: Target::Shortcut(PathBuf::new()),
+            played: played.map(|secs| SystemTime::UNIX_EPOCH + Duration::from_secs(secs)),
+        }
+    }
+
+    fn shown(apps: &[App], query: &str, sort: Sort) -> Vec<String> {
+        let mut view = vec![99]; // old content must be thrown away
+        arrange(&mut view, apps, query, sort);
+        view.into_iter().map(|i| apps[i].name.clone()).collect()
+    }
+
+    #[test]
+    fn search_and_sort_choose_and_order_the_tiles() {
+        // A to Z, the way `apps::discover` returns them.
+        let apps = [
+            app("Alpha", Some(50)),
+            app("Beta Game", None),
+            app("Gamma", Some(90)),
+            app("Zed", Some(50)),
+        ];
+        assert_eq!(
+            shown(&apps, "", Sort::AToZ),
+            ["Alpha", "Beta Game", "Gamma", "Zed"]
+        );
+        assert_eq!(
+            shown(&apps, "", Sort::ZToA),
+            ["Zed", "Gamma", "Beta Game", "Alpha"]
+        );
+        // Newest first, equal times in A to Z order, never played last.
+        assert_eq!(
+            shown(&apps, "", Sort::Recent),
+            ["Gamma", "Alpha", "Zed", "Beta Game"]
+        );
+        // Search ignores case and spaces at the ends, with every sort.
+        assert_eq!(shown(&apps, "  GAM ", Sort::AToZ), ["Beta Game", "Gamma"]);
+        assert_eq!(shown(&apps, "gam", Sort::ZToA), ["Gamma", "Beta Game"]);
+        assert_eq!(shown(&apps, "gam", Sort::Recent), ["Gamma", "Beta Game"]);
+        assert!(shown(&apps, "nothing", Sort::AToZ).is_empty());
+    }
 }
