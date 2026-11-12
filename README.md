@@ -52,14 +52,14 @@ Visit the [Wex GitHub Releases](https://github.com/brRige/wex/releases/latest) p
 
 Download the Linux x86_64 archive:
 
-`wex-v0.2.0-linux-x86_64.tar.gz`
+`wex-v0.3.0-linux-x86_64.tar.gz`
 
 **2. Extract the archive**
 
 Open a terminal in your Downloads directory:(Or Open terminal  and write "  cd ~/Downloads  " or whatever folder you have downloaded wex in.
 
 ```bash
-tar -xzf wex-v0.2.0-linux-x86_64.tar.gz
+tar -xzf wex-v0.3.0-linux-x86_64.tar.gz
 ```
 
 **3. Launch Wex**
@@ -67,7 +67,7 @@ tar -xzf wex-v0.2.0-linux-x86_64.tar.gz
 Enter the extracted directory:
 
 ```bash
-cd wex-v0.2.0
+cd wex-v0.3.0
 ```
 
 Start the graphical interface:
