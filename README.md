@@ -16,7 +16,7 @@ Instead of putting every application into one shared Wine environment, Wex gives
 
 ## Before you start: Install Wine
 
-Wex uses [Wine](https://www.winehq.org/) to run Windows applications on Linux. **Wine must be installed separately before using Wex.** **A popup will appear asking you to download if you dont have wine so you DONT HAVE TO WORRY**
+Wex uses [Wine](https://www.winehq.org/) to run Windows applications on Linux. **Wine must be installed separately before using Wex.** **A popup will appear asking you to download if you dont have wine so you DONT HAVE TO WORRY[**Download Wex**](https://github.com/brRige/wex/releases/latest) AND GET STARTED**
 
 Choose the installation method for your Linux distribution:
 
